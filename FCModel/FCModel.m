@@ -218,7 +218,11 @@ static inline void onMainThreadAsync(void (^block)())
     } else if ([instanceValue isKindOfClass:NSURL.class]) {
         return [(NSURL *)instanceValue absoluteString];
     } else if ([instanceValue isKindOfClass:NSDate.class]) {
-        return [NSNumber numberWithDouble:[(NSDate *)instanceValue timeIntervalSince1970]];
+        if ([g_databaseQueue.database hasDateFormatter]) {
+            return instanceValue;
+        } else {
+            return [NSNumber numberWithDouble:[(NSDate *)instanceValue timeIntervalSince1970]];
+        }
     }
 
     return instanceValue;
@@ -238,7 +242,15 @@ static inline void onMainThreadAsync(void (^block)())
         if (propertyClass == NSURL.class) {
             return [NSURL URLWithString:databaseValue];
         } else if (propertyClass == NSDate.class) {
-            return [NSDate dateWithTimeIntervalSince1970:[databaseValue doubleValue]];
+            if ([g_databaseQueue.database hasDateFormatter]) {
+                if ([databaseValue isKindOfClass:NSDate.class]) {
+                    return databaseValue;
+                } else {
+                    return [g_databaseQueue.database dateFromString:databaseValue];
+                }
+            } else {
+                return [NSDate dateWithTimeIntervalSince1970:[databaseValue doubleValue]];
+            }
         } else if (propertyClass == NSDictionary.class) {
             NSDictionary *dict = [NSPropertyListSerialization propertyListWithData:databaseValue options:kCFPropertyListImmutable format:NULL error:NULL];
             return dict && [dict isKindOfClass:NSDictionary.class] ? dict : @{};
