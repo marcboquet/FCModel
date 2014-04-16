@@ -63,7 +63,12 @@
     }
     
     XCTAssertTrue([FCModel closeDatabase]);
+    XCTAssertTrue(! [FCModel databaseIsOpen]);
+    XCTAssertTrue([SimpleModel instanceWithPrimaryKey:@"a"] == nil);
+    XCTAssertThrows([SimpleModel executeUpdateQuery:@"UPDATE $T SET name = 'bogus'"]);
+
     [self openDatabase];
+    XCTAssertTrue([FCModel databaseIsOpen]);
     
     SimpleModel *entity2 = [SimpleModel instanceWithPrimaryKey:@"a"];
     XCTAssertTrue(entity2.existsInDatabase);
@@ -102,6 +107,45 @@
     XCTAssertEqual(info5.type, FCModelFieldTypeOther);
 }
 
+- (void)testFieldDefaultNull
+{
+    FCModelFieldInfo *fieldInfoUnspecified = [SimpleModel infoForFieldName:@"textDefaultUnspecified"];
+    FCModelFieldInfo *fieldInfoNullLiteral = [SimpleModel infoForFieldName:@"textDefaultNullLiteral"];
+    FCModelFieldInfo *fieldInfoNullString = [SimpleModel infoForFieldName:@"textDefaultNullString"];
+    
+    XCTAssertTrue(fieldInfoUnspecified.nullAllowed);
+    XCTAssertTrue(fieldInfoNullLiteral.nullAllowed);
+    XCTAssertTrue(fieldInfoNullString.nullAllowed);
+    XCTAssertTrue(fieldInfoUnspecified.defaultValue == nil);
+    XCTAssertTrue(fieldInfoNullLiteral.defaultValue == nil);
+    XCTAssertTrue([fieldInfoNullString.defaultValue isEqualToString:@"NULL"]);
+    
+    SimpleModel *entity = [SimpleModel new];
+    XCTAssertTrue(entity.textDefaultUnspecified == nil);
+    XCTAssertTrue(entity.textDefaultNullLiteral == nil);
+    XCTAssertTrue(entity.textDefaultNullString && [entity.textDefaultNullString isEqualToString:@"NULL"]);
+}
+
+- (void)testNullableNumberField
+{
+    FCModelFieldInfo *infoDefaultUnspecified = [SimpleModel infoForFieldName:@"nullableNumberDefaultUnspecified"];
+    FCModelFieldInfo *infoDefaultNull = [SimpleModel infoForFieldName:@"nullableNumberDefaultNull"];
+    FCModelFieldInfo *infoDefault1 = [SimpleModel infoForFieldName:@"nullableNumberDefault1"];
+    
+    XCTAssertTrue(infoDefaultUnspecified.nullAllowed);
+    XCTAssertTrue(infoDefaultNull.nullAllowed);
+    XCTAssertTrue(infoDefault1.nullAllowed);
+
+    XCTAssertTrue(infoDefaultUnspecified.defaultValue == nil);
+    XCTAssertTrue(infoDefaultNull.defaultValue == nil);
+    XCTAssertTrue([infoDefault1.defaultValue isEqual:@(1)]);
+    
+    SimpleModel *entity = [SimpleModel new];
+    XCTAssertTrue(entity.nullableNumberDefaultUnspecified == nil);
+    XCTAssertTrue(entity.nullableNumberDefaultNull == nil);
+    XCTAssertTrue([entity.nullableNumberDefault1 isEqual:@(1)]);
+}
+
 #pragma mark - Helper methods
 
 - (void)openDatabase
@@ -123,8 +167,14 @@
                    @"    uniqueID     TEXT PRIMARY KEY,"
                    @"    name         TEXT,"
                    @"    date         DATETIME,"
+                   @"    textDefaultUnspecified TEXT,"
+                   @"    textDefaultNullLiteral TEXT DEFAULT NULL,"
+                   @"    textDefaultNullString  TEXT DEFAULT 'NULL',"
+                   @"    nullableNumberDefaultUnspecified INTEGER,"
+                   @"    nullableNumberDefaultNull INTEGER DEFAULT NULL,"
+                   @"    nullableNumberDefault1 INTEGER DEFAULT 1,"
                    @"    lowercase         text,"
-                   @"    mixedcase         Integer,"
+                   @"    mixedcase         Integer NOT NULL,"
                    @"    typelessTest"
                    @");"
                    ]) failedAt(1);
