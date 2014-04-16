@@ -11,9 +11,3 @@
 @implementation SimpleModel
 
 @end
-
-@implementation ModelWithCustomTableName
-
-+ (NSString *)tableName { return @"CustomTableName"; }
-
-@end

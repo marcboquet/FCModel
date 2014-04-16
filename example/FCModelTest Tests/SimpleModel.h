@@ -18,11 +18,3 @@
 @property (nonatomic) NSInteger mixedcase;
 
 @end
-
-
-
-@interface ModelWithCustomTableName : FCModel
-
-@property (nonatomic, copy) NSString *uniqueID;
-
-@end
