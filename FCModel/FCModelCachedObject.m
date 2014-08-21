@@ -8,6 +8,10 @@
 #import "FCModelCachedObject.h"
 #import "FCModel.h"
 
+// FCModelCachedObject has its own notification that runs BEFORE the other FCModel change notifications
+//  so it can remove stale data before any application actions fetch new data in response to the change.
+extern NSString * const FCModelWillSendAnyChangeNotification;
+
 #pragma mark - Global cache
 
 @interface FCModelGeneratedObjectCache : NSObject
@@ -95,6 +99,7 @@
 @property (nonatomic, copy) id (^generator)(void);
 @property (nonatomic) BOOL currentResultIsValid;
 @property (nonatomic) id currentResult;
+@property (nonatomic) NSSet *ignoredFieldsForInvalidation;
 
 @end
 
@@ -107,17 +112,21 @@
 
 + (instancetype)objectWithModelClass:(Class)fcModelClass cacheIdentifier:(id)identifier generator:(id (^)(void))generatorBlock
 {
+    return [self objectWithModelClass:fcModelClass cacheIdentifier:identifier ignoreFieldsForInvalidation:nil generator:generatorBlock];
+}
+
++ (instancetype)objectWithModelClass:(Class)fcModelClass cacheIdentifier:(id)identifier ignoreFieldsForInvalidation:(NSSet *)ignoredFields generator:(id (^)(void))generatorBlock
+{
     FCModelCachedObject *obj = [FCModelGeneratedObjectCache.sharedInstance objectWithModelClass:fcModelClass identifier:identifier];
 
     if (! obj) {
         obj = [[FCModelCachedObject alloc] init];
         obj.modelClass = fcModelClass;
         obj.generator = generatorBlock;
+        obj.ignoredFieldsForInvalidation = ignoredFields;
 
-        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(flush:) name:FCModelWillReloadNotification object:FCModel.class];
-        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(flush:) name:FCModelWillReloadNotification object:fcModelClass];
-        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(flush:) name:FCModelAnyChangeNotification object:FCModel.class];
-        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(flush:) name:FCModelAnyChangeNotification object:fcModelClass];
+        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(dataSourceChanged:) name:FCModelWillReloadNotification object:fcModelClass];
+        [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(dataSourceChanged:) name:FCModelWillSendAnyChangeNotification object:fcModelClass];
 
 #if TARGET_OS_IPHONE
         [NSNotificationCenter.defaultCenter addObserver:obj selector:@selector(flush:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
@@ -130,14 +139,26 @@
 
 - (void)dealloc
 {
-    [NSNotificationCenter.defaultCenter removeObserver:self name:FCModelWillReloadNotification object:FCModel.class];
     [NSNotificationCenter.defaultCenter removeObserver:self name:FCModelWillReloadNotification object:_modelClass];
-    [NSNotificationCenter.defaultCenter removeObserver:self name:FCModelAnyChangeNotification object:FCModel.class];
-    [NSNotificationCenter.defaultCenter removeObserver:self name:FCModelAnyChangeNotification object:_modelClass];
+    [NSNotificationCenter.defaultCenter removeObserver:self name:FCModelWillSendAnyChangeNotification object:_modelClass];
 
 #if TARGET_OS_IPHONE
     [NSNotificationCenter.defaultCenter removeObserver:self name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
 #endif
+}
+
+- (void)dataSourceChanged:(NSNotification *)n
+{
+    if (n.object != nil && n.object != self.modelClass) return;
+    
+    NSSet *changedFields, *ignoredFields = self.ignoredFieldsForInvalidation;
+    if (ignoredFields && (changedFields = n.userInfo[FCModelChangedFieldsKey]) ) {
+        NSMutableSet *fieldsWeCareAbout = [changedFields mutableCopy];
+        [fieldsWeCareAbout minusSet:ignoredFields];
+        if (fieldsWeCareAbout.count == 0) return;
+    }
+    
+    [self flush:n];
 }
 
 - (void)flush:(NSNotification *)n
@@ -167,11 +188,11 @@
 
 @implementation FCModelLiveResultArray
 
-+ (instancetype)arrayWithModelClass:(Class)fcModelClass queryAfterWHERE:(NSString *)query arguments:(NSArray *)arguments
++ (instancetype)arrayWithModelClass:(Class)fcModelClass queryAfterWHERE:(NSString *)query arguments:(NSArray *)arguments ignoreFieldsForInvalidation:(NSSet *)ignoredFields
 {
     FCModelLiveResultArray *set = [self new];
     
-    set.cachedObject = [FCModelCachedObject objectWithModelClass:fcModelClass cacheIdentifier:@[(query ?: NSNull.null), (arguments ?: NSNull.null)] generator:^id{
+    set.cachedObject = [FCModelCachedObject objectWithModelClass:fcModelClass cacheIdentifier:@[(query ?: NSNull.null), (arguments ?: NSNull.null)] ignoreFieldsForInvalidation:ignoredFields generator:^id{
         return query ? [fcModelClass instancesWhere:query arguments:arguments] : [fcModelClass allInstances];
     }];
 

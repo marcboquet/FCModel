@@ -6,6 +6,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#include <AvailabilityMacros.h>
 
 #ifdef COCOAPODS
 #import <FMDB/FMDatabase.h>
@@ -20,25 +21,30 @@
 //
 //  [NSNotificationCenter.defaultCenter addObserver:... selector:... name:FCModelUpdateNotification object:Person.class];
 //
-// The specific instance or instances acted upon are passed as an NSSet in userInfo[FCModelInstanceSetKey].
-// The set will always contain exactly one instance unless you use beginNotificationBatch/endNotificationBatchAndNotify.
+// Or set object to nil to get notified of operations to all FCModels.
 //
 extern NSString * const FCModelInsertNotification;
 extern NSString * const FCModelUpdateNotification;
 extern NSString * const FCModelDeleteNotification;
-extern NSString * const FCModelInstanceSetKey;
-
-// Like the above with using the Class as the object, except that this one doesn't get a set of changed instances,
-//  fires on any insert, update, or delete, and also fires after calls to dataWasUpdatedExternally and executeUpdateQuery:.
-// If you find yourself subscribing to all three insert/update/delete notifications to do something like reload a tableview,
-//  this is probably what you want instead.
+extern NSString * const FCModelAnyChangeNotification; // Any insert, update, delete, dataWasUpdatedExternally, or executeUpdateQuery:.
 //
-extern NSString * const FCModelAnyChangeNotification;
+// userInfo[FCModelInstanceSetKey] is an NSSet containing the specific FCModel instance(s) acted upon.
+// The set will always contain exactly one instance, except:
+//  - If you use begin/endNotificationBatchAndNotify, it will contain all instances that received the notification during the batch.
+//  - For dataWasUpdatedExternally/executeUpdateQuery:, it will contain all loaded instances of the class.
+//
+extern NSString * const FCModelInstanceSetKey;
+//
+// userInfo[FCModelChangedFieldsByInstanceKey] is an NSSet of NSString field names.
+// "Changed" field names may be overly inclusive: all named fields may not *actually* have changed, but all actual changes will be in the set.
+//
+extern NSString * const FCModelChangedFieldsKey;
 
 
 // During dataWasUpdatedExternally and executeUpdateQuery:, this is called immediately before FCModel tells all loaded
 //  instances of the affected class to reload themselves. Reloading can be time-consuming if many instances are in memory,
 //  so this is a good time to release any unnecessarily retained instances so they don't need to go through the reload.
+// The notification's object is the affected class.
 //
 // (You probably don't need to care about this. Until you do.)
 //
@@ -57,7 +63,8 @@ typedef NS_ENUM(NSInteger, FCModelSaveResult) {
 @property (readonly) id primaryKey;
 @property (readonly) NSDictionary *allFields;
 @property (readonly) BOOL hasUnsavedChanges;
-@property (readonly) BOOL existsInDatabase;
+@property (readonly) BOOL existsInDatabase; // either deleted or never saved
+@property (readonly) BOOL isDeleted;
 @property (readonly) NSError *lastSQLiteError;
 
 + (void)openDatabaseAtPath:(NSString *)path withSchemaBuilder:(void (^)(FMDatabase *db, int *schemaVersion))schemaBuilder;
@@ -93,6 +100,7 @@ typedef NS_ENUM(NSInteger, FCModelSaveResult) {
 // CRUD basics
 + (instancetype)instanceWithPrimaryKey:(id)primaryKeyValue; // will create if nonexistent
 + (instancetype)instanceWithPrimaryKey:(id)primaryKeyValue createIfNonexistent:(BOOL)create; // will return nil if nonexistent
+- (NSArray *)changedFieldNames;
 - (void)revertUnsavedChanges;
 - (void)revertUnsavedChangeToFieldName:(NSString *)fieldName;
 - (FCModelSaveResult)delete;
@@ -135,12 +143,14 @@ typedef NS_ENUM(NSInteger, FCModelSaveResult) {
 
 // These methods use a global query cache (in FCModelCachedObject). Results are cached indefinitely until their
 //  table has any writes or there's a system low-memory warning, at which point they automatically invalidate.
+//  You can customize whether invalidations are triggered with the optional ignoreFieldsForInvalidation: params.
 // The next subsequent request will repopulate the cached data, either by querying the DB (cachedInstancesWhere)
 //  or calling the generator block (cachedObjectWithIdentifier).
 //
 + (NSArray *)cachedInstancesWhere:(NSString *)queryAfterWHERE arguments:(NSArray *)arguments;
++ (NSArray *)cachedInstancesWhere:(NSString *)queryAfterWHERE arguments:(NSArray *)arguments ignoreFieldsForInvalidation:(NSSet *)ignoredFields;
 + (id)cachedObjectWithIdentifier:(id)identifier generator:(id (^)(void))generatorBlock;
-
++ (id)cachedObjectWithIdentifier:(id)identifier ignoreFieldsForInvalidation:(NSSet *)ignoredFields generator:(id (^)(void))generatorBlock;
 
 // For subclasses to override, all optional:
 
@@ -216,8 +226,14 @@ typedef NS_ENUM(NSInteger, FCModelSaveResult) {
 // Be careful: batch notification order is not preserved, and you may be unexpectedly interacting with deleted instances.
 // Always check the given instances' .existsInDatabase property.
 //
-+ (void)beginNotificationBatch;
-+ (void)endNotificationBatchAndNotify:(BOOL)sendQueuedNotifications;
+// NOTE: Notification batching is thread-local. Operations performed in other threads will still send notifications normally.
+//
++ (void)performWithBatchedNotifications:(void (^)())block deliverOnCompletion:(BOOL)deliverNotifications;
++ (void)performWithBatchedNotifications:(void (^)())block; // equivalent to performWithBatchedNotifications:deliverOnCompletion:YES
+
+// Deprecated original call style. Will be removed imminently:
++ (void)beginNotificationBatch DEPRECATED_ATTRIBUTE;
++ (void)endNotificationBatchAndNotify:(BOOL)sendQueuedNotifications DEPRECATED_ATTRIBUTE;
 
 // Field info: You probably won't need this most of the time, but it's nice to have sometimes. FCModel's generating this privately
 //  anyway, so you might as well have read-only access to it if it can help you avoid some code. (I've already needed it.)
@@ -266,5 +282,6 @@ typedef NS_ENUM(NSInteger, FCModelFieldType) {
 @property (nonatomic, readonly) FCModelFieldType type;
 @property (nonatomic, readonly) id defaultValue;
 @property (nonatomic, readonly) Class propertyClass;
+@property (nonatomic, readonly) NSString *propertyTypeEncoding;
 @end
 
